@@ -1,0 +1,83 @@
+/* Neon Rain: restrained dark violet theme for SwayNC.
+   SwayNC loads /etc/xdg/swaync/style.css first; this file only overrides colours and accents. */
+
+:root {
+  --cc-bg: rgba(14, 10, 24, 0.92);
+  --noti-border-color: rgba(157, 108, 255, 0.28);
+  --noti-bg: 22, 16, 36;
+  --noti-bg-alpha: 0.94;
+  --noti-bg-darker: rgb(16, 11, 28);
+  --noti-bg-hover: rgb(34, 24, 56);
+  --noti-bg-focus: rgba(52, 36, 86, 0.6);
+  --noti-close-bg: rgb(44, 32, 72);
+  --noti-close-bg-hover: rgb(72, 50, 120);
+  --text-color: rgb(226, 220, 245);
+  --text-color-disabled: rgb(128, 118, 156);
+  --bg-selected: rgb(140, 92, 246);
+  --border-radius: 10px;
+  --notification-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.55), 0 0 10px rgba(140, 92, 246, 0.12);
+  --font-size-body: 14px;
+  --font-size-summary: 15px;
+}
+
+/* Fallback colours for widgets still using @define-color */
+@define-color cc-bg rgba(14, 10, 24, 0.92);
+@define-color noti-border-color rgba(157, 108, 255, 0.28);
+@define-color noti-bg rgba(22, 16, 36, 0.94);
+@define-color noti-bg-opaque rgb(22, 16, 36);
+@define-color noti-bg-darker rgb(16, 11, 28);
+@define-color noti-bg-hover rgb(34, 24, 56);
+@define-color noti-bg-hover-opaque rgb(34, 24, 56);
+@define-color noti-bg-focus rgba(52, 36, 86, 0.6);
+@define-color noti-close-bg rgba(157, 108, 255, 0.14);
+@define-color noti-close-bg-hover rgba(157, 108, 255, 0.28);
+@define-color text-color rgb(226, 220, 245);
+@define-color text-color-disabled rgb(128, 118, 156);
+@define-color bg-selected rgb(140, 92, 246);
+
+/* Thin violet "rain" edge on the left of each notification */
+.notification-row .notification-background .notification {
+  border-left: 2px solid rgba(157, 108, 255, 0.7);
+}
+
+.notification-row .notification-background .notification.low {
+  border-left-color: rgba(120, 110, 160, 0.5);
+}
+
+.notification-row .notification-background .notification.critical {
+  border-left-color: rgb(255, 92, 160);
+  box-shadow: 0 0 0 1px rgba(255, 92, 160, 0.35), 0 4px 14px rgba(0, 0, 0, 0.55);
+}
+
+.notification-row .notification-background .notification .notification-default-action .notification-content .text-box .summary {
+  color: rgb(214, 196, 255);
+}
+
+.notification-row .notification-background .notification .notification-default-action .notification-content .text-box .time {
+  color: rgb(140, 126, 180);
+}
+
+.control-center {
+  border: 1px solid rgba(157, 108, 255, 0.3);
+}
+
+.widget-title > label {
+  color: rgb(200, 176, 255);
+  font-weight: bold;
+}
+
+.widget-title > button,
+.widget-inhibitors > button {
+  border: 1px solid rgba(157, 108, 255, 0.35);
+  background: rgba(157, 108, 255, 0.1);
+}
+
+.widget-title > button:hover,
+.widget-inhibitors > button:hover {
+  background: rgba(157, 108, 255, 0.25);
+}
+
+.widget-dnd switch:checked {
+  background: rgb(140, 92, 246);
+}

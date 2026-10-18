@@ -286,7 +286,8 @@ hl.bind(mainMod .. " + C", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("tmux"))
 hl.bind(mainMod .. " + Z", hl.dsp.window.close())
 hl.bind(mainMod .. " + M", hl.dsp.exit())
-hl.bind(mainMod .. " + N", hl.dsp.exec_cmd("nemo"))
+hl.bind(mainMod .. " + N", hl.dsp.exec_cmd("swaync-client -t"))
+hl.bind(mainMod .. " + SHIFT + N", hl.dsp.exec_cmd("nemo"))
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd("kitty -e htop"))
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd("kitty -e nvtop"))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
@@ -500,6 +501,10 @@ hl.config({
 
 hl.on("hyprland.start", function()
 	hl.exec_cmd("hyprpaper & waybar")
+	-- Notifications: SwayNC via its packaged systemd user unit (sole owner of org.freedesktop.Notifications)
+	hl.exec_cmd(
+		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start swaync.service"
+	)
 	-- hl.exec_cmd(terminal .. " -e hermes", { workspace = "1 silent" })
 	-- hl.exec_cmd(terminal .. " -e cmatrix -C magenta", { workspace = "2 silent" })
 	hl.exec_cmd(terminal .. " --directory ~/payroll_laravel/ -e lazygit", { workspace = "4 silent" })
