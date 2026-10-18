@@ -1,0 +1,14 @@
+{
+  "artwork": { "width": 1672, "height": 941 },
+  "buildings": [
+    {
+      "id": "herdr",
+      "label": "HERDR",
+      "subtitle": "Agent Operations Tower",
+      "rect": { "x": 664, "y": 268, "w": 136, "h": 277 },
+      "workspace": 6,
+      "provider": "herdr",
+      "sessions": ["payroll_laravel", "trading-empire"]
+    }
+  ]
+}

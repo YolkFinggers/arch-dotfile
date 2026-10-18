@@ -1,0 +1,8 @@
+# Local process state, backups and logs
+/run/
+/logs/
+# Generated captures and measurement output (reproduce with scripts)
+/tests/results/
+# Python caches
+__pycache__/
+*.py[cod]

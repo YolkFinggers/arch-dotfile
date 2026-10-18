@@ -1,0 +1,14 @@
+{
+  "profile": "balanced",
+  "fps": null,
+  "reducedMotion": false,
+  "reducedMotionStyle": "static",
+  "rain": {
+    "intensity": 1.0,
+    "speed": 1.0
+  },
+  "outputs": {
+    "default": { "focusX": 0.5, "focusY": 0.5 },
+    "HDMI-A-1": { "focusX": 0.5, "focusY": 0.5 }
+  }
+}

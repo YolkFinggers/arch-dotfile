@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# NEON RAIN M1 living-wallpaper prototype control.
+#
+#   neon-rain-proto discover          print the live Hyprland instance this would attach to
+#   neon-rain-proto compile           (re)build shaders/*.qsb when sources are newer
+#   neon-rain-proto start             start the prototype (no-op if already running)
+#   neon-rain-proto stop              stop ONLY the prototype recorded in run/prototype.pid
+#   neon-rain-proto status            process, compositor layers and in-shell status
+#   neon-rain-proto logs [-f]         show the latest prototype log
+#   neon-rain-proto ipc <fn> [args]   call the `neonrain` IpcHandler (setProfile eco, setFps 24, ...)
+#
+# Scope rules: never touches the bar, hyprpaper, Hyprland config or any other process.
+# The prototype gets an allow-listed environment so no inherited tokens reach it or its log.
+# Optional env for start: NEON_RAIN_PROFILE=eco|balanced|smooth NEON_RAIN_FPS=<1..120>
+# NEON_RAIN_REDUCED_MOTION=0|1, NEON_RAIN_HYPR_SIG=<signature> to pick one of several instances.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WALL="$ROOT/wallpaper"
+RUN_DIR="$ROOT/run"
+LOG_DIR="$ROOT/logs"
+PIDFILE="$RUN_DIR/prototype.pid"
+QSB=/usr/lib/qt6/bin/qsb
+QS=/usr/bin/quickshell
+NAMESPACE=neon-rain-wallpaper
+
+die() {
+    echo "neon-rain-proto: $*" >&2
+    exit 1
+}
+
+# Find the live compositor from its lock file (line 1: PID, line 2: WAYLAND_DISPLAY) and
+# only accept it when that PID is a running Hyprland owned by us and both sockets exist.
+# Sets HYPR_PID HYPR_SIG WL_DISPLAY RT.
+discover() {
+    RT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    local found=() lock pid wl sig
+    for lock in "$RT"/hypr/*/hyprland.lock; do
+        [[ -f $lock ]] || continue
+        pid="" wl=""
+        { read -r pid || true; read -r wl || true; } <"$lock"
+        [[ $pid =~ ^[0-9]+$ ]] || continue
+        [[ -r /proc/$pid/comm && "$(</proc/"$pid"/comm)" == Hyprland ]] || continue
+        [[ "$(stat -c %u /proc/"$pid")" == "$(id -u)" ]] || continue
+        sig="$(basename "$(dirname "$lock")")"
+        [[ -n ${NEON_RAIN_HYPR_SIG:-} && $sig != "$NEON_RAIN_HYPR_SIG" ]] && continue
+        [[ -S "$RT/hypr/$sig/.socket.sock" ]] || continue
+        [[ -n $wl && -S "$RT/$wl" ]] || continue
+        found+=("$pid $sig $wl")
+    done
+    ((${#found[@]} > 0)) || die "no live Hyprland instance under $RT/hypr (stale lock files are ignored)"
+    ((${#found[@]} == 1)) || die "several live Hyprland instances; set NEON_RAIN_HYPR_SIG to one of: $(printf '%s ' "${found[@]}")"
+    read -r HYPR_PID HYPR_SIG WL_DISPLAY <<<"${found[0]}"
+    HYPRLAND_INSTANCE_SIGNATURE="$HYPR_SIG" hyprctl -j version >/dev/null 2>&1 ||
+        die "hyprctl cannot reach instance $HYPR_SIG"
+}
+
+hypr() {
+    HYPRLAND_INSTANCE_SIGNATURE="$HYPR_SIG" hyprctl "$@"
+}
+
+# Prints the prototype PID only if the pidfile points at a live quickshell running OUR path.
+running_pid() {
+    [[ -f $PIDFILE ]] || return 1
+    local pid
+    pid="$(<"$PIDFILE")"
+    [[ $pid =~ ^[0-9]+$ && -r /proc/$pid/cmdline ]] || return 1
+    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -qF -- "--path $WALL " || return 1
+    echo "$pid"
+}
+
+cmd_discover() {
+    discover
+    echo "hyprland_pid=$HYPR_PID"
+    echo "hyprland_instance_signature=$HYPR_SIG"
+    echo "wayland_display=$WL_DISPLAY"
+    echo "xdg_runtime_dir=$RT"
+}
+
+cmd_compile() {
+    local src out
+    for src in "$WALL"/shaders/*.frag "$WALL"/shaders/*.vert; do
+        [[ -f $src ]] || continue
+        out="$src.qsb"
+        if [[ ! -f $out || $src -nt $out ]]; then
+            echo "compiling $(basename "$src")"
+            "$QSB" --qt6 -o "$out" "$src"
+        fi
+    done
+}
+
+# Layer surfaces belonging to a PID, one line each: monitor level namespace geometry.
+layers_for_pid() {
+    hypr layers -j | python3 -I "$ROOT/scripts/hyprlayers.py" --pid "$1"
+}
+
+cmd_start() {
+    local pid
+    if pid="$(running_pid)"; then
+        echo "already running: pid $pid"
+        return 0
+    fi
+    discover
+    cmd_compile
+    mkdir -p "$RUN_DIR" "$LOG_DIR"
+    local log
+    log="$LOG_DIR/prototype-$(date +%Y%m%d-%H%M%S).log"
+    ln -sfn "$(basename "$log")" "$LOG_DIR/latest.log"
+    {
+        echo "# neon-rain prototype start $(date -Is)"
+        echo "# hyprland pid=$HYPR_PID signature=$HYPR_SIG wayland=$WL_DISPLAY"
+        echo "# env NEON_RAIN_PROFILE=${NEON_RAIN_PROFILE:-} NEON_RAIN_FPS=${NEON_RAIN_FPS:-} NEON_RAIN_REDUCED_MOTION=${NEON_RAIN_REDUCED_MOTION:-}"
+    } >"$log"
+
+    local extra=()
+    [[ -n ${NEON_RAIN_PROFILE:-} ]] && extra+=("NEON_RAIN_PROFILE=$NEON_RAIN_PROFILE")
+    [[ -n ${NEON_RAIN_FPS:-} ]] && extra+=("NEON_RAIN_FPS=$NEON_RAIN_FPS")
+    [[ -n ${NEON_RAIN_REDUCED_MOTION:-} ]] && extra+=("NEON_RAIN_REDUCED_MOTION=$NEON_RAIN_REDUCED_MOTION")
+
+    # setsid: own session so closing this terminal does not kill it; env -i: allow-listed env.
+    setsid env -i \
+        HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin LANG="${LANG:-C.UTF-8}" \
+        XDG_RUNTIME_DIR="$RT" WAYLAND_DISPLAY="$WL_DISPLAY" HYPRLAND_INSTANCE_SIGNATURE="$HYPR_SIG" \
+        XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland QT_QPA_PLATFORM=wayland QSG_INFO=1 \
+        "${extra[@]}" \
+        "$QS" --path "$WALL" --no-duplicate --no-color --log-times \
+        >>"$log" 2>&1 </dev/null &
+    echo $! >"$PIDFILE"
+
+    local i
+    for i in $(seq 1 40); do
+        sleep 0.25
+        if ! pid="$(running_pid)"; then
+            rm -f "$PIDFILE"
+            echo "prototype exited during startup; log: $log" >&2
+            tail -n 30 "$log" >&2
+            return 1
+        fi
+        if layers_for_pid "$pid" | grep -q "ns=$NAMESPACE"; then
+            echo "started: pid $pid"
+            echo "log: $log"
+            layers_for_pid "$pid"
+            return 0
+        fi
+    done
+    echo "started pid $pid but no $NAMESPACE layer after 10s; check $log" >&2
+    return 1
+}
+
+cmd_stop() {
+    local pid i
+    if ! pid="$(running_pid)"; then
+        rm -f "$PIDFILE"
+        echo "not running"
+        return 0
+    fi
+    kill -TERM "$pid"
+    for i in $(seq 1 20); do
+        sleep 0.25
+        if ! running_pid >/dev/null; then
+            rm -f "$PIDFILE"
+            echo "stopped: pid $pid"
+            return 0
+        fi
+    done
+    # Re-verify identity right before escalating so a recycled PID is never killed.
+    if running_pid >/dev/null; then
+        kill -KILL "$pid"
+        echo "killed (SIGKILL after 5s): pid $pid"
+    fi
+    rm -f "$PIDFILE"
+}
+
+ipc_call() {
+    local pid="$1"
+    shift
+    # Quickshell prints its own warnings on stdout too; keep only the JSON reply line.
+    env -i HOME="$HOME" PATH=/usr/bin:/bin LANG=C.UTF-8 XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
+        "$QS" ipc --pid "$pid" call neonrain "$@" | grep -E '^[{\[]'
+}
+
+cmd_status() {
+    local pid
+    if ! pid="$(running_pid)"; then
+        echo "prototype: not running"
+        return 3
+    fi
+    discover
+    echo "prototype: running pid $pid ($(awk '/VmRSS/ {print $2 " " $3}' "/proc/$pid/status") RSS)"
+    echo "log: $(readlink -f "$LOG_DIR/latest.log")"
+    echo "layers:"
+    layers_for_pid "$pid" | sed 's/^/  /'
+    echo "ipc status:"
+    ipc_call "$pid" status | python3 -I -m json.tool | sed 's/^/  /'
+}
+
+cmd_logs() {
+    [[ -e $LOG_DIR/latest.log ]] || die "no logs yet"
+    if [[ ${1:-} == -f ]]; then
+        tail -n 50 -f "$LOG_DIR/latest.log"
+    else
+        cat "$LOG_DIR/latest.log"
+    fi
+}
+
+cmd_ipc() {
+    local pid
+    pid="$(running_pid)" || die "prototype not running"
+    (($# > 0)) || die "usage: ipc <status|setProfile NAME|setFps N|setReducedMotion true|false|clearOverrides>"
+    ipc_call "$pid" "$@"
+}
+
+case "${1:-}" in
+discover) cmd_discover ;;
+compile) cmd_compile ;;
+start) cmd_start ;;
+stop) cmd_stop ;;
+status) cmd_status ;;
+logs) shift; cmd_logs "$@" ;;
+ipc) shift; cmd_ipc "$@" ;;
+*)
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac

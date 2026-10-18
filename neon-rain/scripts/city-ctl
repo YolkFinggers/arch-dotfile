@@ -1,0 +1,351 @@
+#!/usr/bin/env -S python3 -I
+"""NEON RAIN M2 City Mode controller.
+
+    city-ctl status                 JSON: per-building discovery (Herdr sessions/windows, workspace, monitor)
+    city-ctl snapshot               JSON: monitors, active workspaces, focused monitor/window (no titles)
+    city-ctl activate ID [--dry-run]  focus the building's existing window or launch its discovered command
+    city-ctl restore ADDR MONITOR   refocus ADDR if it still exists, else MONITOR ("-" = none)
+    city-ctl toggle                 open/close City Mode (what SUPER+S runs)
+    city-ctl bind | unbind | bind-status   runtime SUPER+S City bind; persistent copy lives in hyprland.lua
+                                   (SUPER+U / SUPER+SHIFT+U = special:magic, never touched)
+
+Talks to Hyprland only through `hyprctl -j` reads and `hyprctl eval` with dispatchers taken
+from the installed Lua stubs (hl.dsp.focus, hl.exec_cmd). Every value interpolated into Lua
+is validated against a strict pattern first. Never closes, moves or kills windows.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+CONFIG = os.path.join(ROOT, "config", "city.json")
+PROTO = os.path.join(ROOT, "scripts", "neon-rain-proto")
+SELF = os.path.join(ROOT, "scripts", "city-ctl")
+HERDR = os.path.expanduser("~/.local/bin/herdr")
+# Terminal and attach form as used by the user's hyprland.lua autostart (`terminal = "kitty"`).
+TERMINAL = "kitty"
+BIND_KEYS = "SUPER + S"
+BIND_KEY = "s"
+SUPER_MODMASK = 64
+# Marks our runtime bind: Lua binds report dispatcher "__lua" and an opaque arg, so the
+# description is the only stable owner tag in `hyprctl binds -j`.
+BIND_DESC = "neon-rain city-ctl toggle"
+
+ADDR_RE = re.compile(r"^0x[0-9a-f]+$")
+NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+MONITOR_RE = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
+
+
+class CityError(Exception):
+    pass
+
+
+def ensure_signature():
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return
+    out = subprocess.run([PROTO, "discover"], capture_output=True, text=True, check=False)
+    for line in out.stdout.splitlines():
+        if line.startswith("hyprland_instance_signature="):
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = line.split("=", 1)[1]
+            return
+    raise CityError("no live Hyprland instance: " + out.stderr.strip())
+
+
+def hypr_json(cmd):
+    out = subprocess.run(["hyprctl", "-j", cmd], capture_output=True, text=True, check=False, timeout=5)
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError as e:
+        raise CityError(f"hyprctl -j {cmd}: {out.stdout.strip()[:120]}") from e
+
+
+def hypr_eval(code):
+    out = subprocess.run(["hyprctl", "eval", code], capture_output=True, text=True, check=False, timeout=5)
+    reply = (out.stdout + out.stderr).strip()
+    if out.returncode != 0 or reply != "ok":
+        raise CityError(f"hyprctl eval failed: {reply[:200]}")
+    return reply
+
+
+def lua_str(value, pattern):
+    if not isinstance(value, str) or not pattern.match(value):
+        raise CityError(f"refusing unsafe value for Lua: {value!r}")
+    return '"' + value + '"'
+
+
+def load_config():
+    with open(CONFIG, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def building(cfg, bid):
+    for b in cfg.get("buildings", []):
+        if b.get("id") == bid:
+            return b
+    raise CityError(f"unknown building {bid!r}")
+
+
+# --- discovery -----------------------------------------------------------------------------
+
+def read_proc(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            argv = [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
+            ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+        return argv, ppid
+    except (OSError, ValueError, IndexError):
+        return None, None
+
+
+def herdr_clients():
+    """Live Herdr client processes: {pid: session} (`herdr` alone attaches session "default")."""
+    found = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        argv, _ = read_proc(entry)
+        if not argv or os.path.basename(argv[0]) != "herdr":
+            continue
+        rest = argv[1:]
+        if rest[:2] == ["session", "attach"] and len(rest) == 3:
+            found[int(entry)] = rest[2]
+        elif not rest:
+            found[int(entry)] = "default"
+    return found
+
+
+def herdr_sessions():
+    out = subprocess.run([HERDR, "session", "list", "--json"], capture_output=True, text=True, check=False, timeout=5)
+    try:
+        return json.loads(out.stdout)["sessions"]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        raise CityError(f"herdr session list failed: {out.stderr.strip()[:120]}") from e
+
+
+def herdr_windows(clients, monitors):
+    """Map each Herdr client to the Hyprland window whose PID is its ancestor."""
+    mon_names = {m["id"]: m["name"] for m in monitors}
+    by_pid = {c["pid"]: c for c in clients}
+    result = []
+    for pid, session in herdr_clients().items():
+        p, hops = pid, 0
+        while p and p > 1 and hops < 16:
+            if p in by_pid:
+                c = by_pid[p]
+                result.append({
+                    "session": session,
+                    "address": c["address"],
+                    "class": c["class"],
+                    "workspace": c["workspace"]["id"],
+                    "monitor": mon_names.get(c["monitor"]),
+                    "focusHistoryID": c["focusHistoryID"],
+                })
+                break
+            _, p = read_proc(p)
+            hops += 1
+    return sorted(result, key=lambda w: w["focusHistoryID"])
+
+
+def assigned_monitor(workspace):
+    for rule in hypr_json("workspacerules"):
+        if rule.get("workspaceString") == str(workspace) and rule.get("monitor"):
+            return rule["monitor"]
+    return None
+
+
+def herdr_status(b):
+    clients = hypr_json("clients")
+    monitors = hypr_json("monitors")
+    ws = int(b["workspace"])
+    try:
+        sessions = herdr_sessions()
+        error = None
+    except CityError as e:
+        sessions, error = [], str(e)
+    windows = herdr_windows(clients, monitors)
+    names = {s["name"]: s for s in sessions}
+    wanted = []
+    for name in b.get("sessions", []):
+        s = names.get(name)
+        wanted.append({
+            "name": name,
+            "running": bool(s and s.get("running")),
+            "known": s is not None,
+            "window": next((w["address"] for w in windows if w["session"] == name), None),
+        })
+    running = sum(1 for s in sessions if s.get("running"))
+    state = "error" if error else ("running" if running else "idle")
+    return {
+        "id": b["id"],
+        "label": b.get("label", b["id"]),
+        "subtitle": b.get("subtitle", ""),
+        "state": state,
+        "error": error,
+        "workspace": ws,
+        "assignedMonitor": assigned_monitor(ws),
+        "workspaceShownOn": next((m["name"] for m in monitors if m["activeWorkspace"]["id"] == ws), None),
+        "sessionsRunning": running,
+        "sessions": wanted,
+        "windows": windows,
+    }
+
+
+def cmd_status():
+    cfg = load_config()
+    return {"buildings": [herdr_status(b) for b in cfg["buildings"] if b.get("provider") == "herdr"]}
+
+
+def snapshot():
+    monitors = hypr_json("monitors")
+    active = hypr_json("activewindow")
+    return {
+        "focusedMonitor": next((m["name"] for m in monitors if m["focused"]), None),
+        "activeWindow": active.get("address") if isinstance(active, dict) else None,
+        "monitors": {m["name"]: m["activeWorkspace"]["id"] for m in monitors},
+    }
+
+
+# --- actions -------------------------------------------------------------------------------
+
+def focus_window(addr):
+    hypr_eval(f"hl.dispatch(hl.dsp.focus({{ window = {lua_str('address:' + addr, re.compile(r'^address:0x[0-9a-f]+$'))} }}))")
+
+
+def focus_monitor(name):
+    hypr_eval(f"hl.dispatch(hl.dsp.focus({{ monitor = {lua_str(name, MONITOR_RE)} }}))")
+
+
+def cmd_activate(bid, dry_run):
+    b = building(load_config(), bid)
+    if b.get("provider") != "herdr":
+        raise CityError(f"building {bid!r} has no supported provider")
+    st = herdr_status(b)
+    before = snapshot()
+    plan = {"building": bid, "dryRun": dry_run, "before": before, "workspace": st["workspace"],
+            "assignedMonitor": st["assignedMonitor"]}
+    if st["windows"]:
+        # Most recently focused Herdr window; focusing it makes Hyprland show its workspace on
+        # the monitor that owns it, so the click's monitor never relocates the workspace.
+        w = st["windows"][0]
+        if not ADDR_RE.match(w["address"]):
+            raise CityError("bad window address from hyprctl")
+        plan.update(action="focus", address=w["address"], session=w["session"], targetMonitor=w["monitor"])
+        if not dry_run:
+            focus_window(w["address"])
+    else:
+        session = next((s["name"] for s in st["sessions"] if s["running"] and not s["window"]), None)
+        if session is None:
+            session = next((s["name"] for s in st["sessions"] if s["known"]), None)
+        if session is None:
+            raise CityError("no discovered Herdr session to attach")
+        lua_str(session, NAME_RE)
+        cmd = f"{TERMINAL} -e herdr session attach {session}"
+        ws = int(st["workspace"])
+        plan.update(action="launch", session=session, command=cmd, targetMonitor=st["assignedMonitor"])
+        if not dry_run:
+            hypr_eval(f"hl.dispatch(hl.dsp.focus({{ workspace = {ws} }}))")
+            hypr_eval(f"hl.exec_cmd({json.dumps(cmd)}, {{ workspace = \"{ws} silent\" }})")
+    if not dry_run:
+        plan["after"] = snapshot()
+        if plan["action"] == "focus":
+            plan["verified"] = plan["after"]["activeWindow"] == plan["address"] and \
+                plan["after"]["focusedMonitor"] == plan["targetMonitor"]
+    return plan
+
+
+def cmd_restore(addr, monitor):
+    clients = {c["address"] for c in hypr_json("clients")}
+    if addr != "-" and ADDR_RE.match(addr) and addr in clients:
+        focus_window(addr)
+        how = "window"
+    elif monitor != "-" and MONITOR_RE.match(monitor):
+        focus_monitor(monitor)
+        how = "monitor"
+    else:
+        how = "none"
+    return {"restored": how, "after": snapshot()}
+
+
+def cmd_toggle():
+    s = snapshot()
+    mon = s["focusedMonitor"] or "-"
+    addr = s["activeWindow"] or "-"
+    out = subprocess.run([PROTO, "ipc", "cityToggle", mon, addr], capture_output=True, text=True, check=False, timeout=5)
+    if out.returncode != 0:
+        raise CityError("City Mode needs the running neon-rain prototype: " + out.stderr.strip())
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+# --- runtime bind --------------------------------------------------------------------------
+
+def city_binds():
+    return [b for b in hypr_json("binds") if b.get("key", "").lower() == BIND_KEY and b.get("modmask") == SUPER_MODMASK]
+
+
+def ours(b):
+    return b.get("description") == BIND_DESC
+
+
+def cmd_bind_status():
+    return {"superS": [{"dispatcher": b.get("dispatcher"), "description": b.get("description"), "ours": ours(b)}
+                       for b in city_binds()]}
+
+
+def cmd_bind():
+    existing = city_binds()
+    if any(not ours(b) for b in existing):
+        raise CityError("SUPER+S is already bound to something else; refusing to override")
+    if existing:
+        return {"bound": "already", **cmd_bind_status()}
+    hypr_eval(f"hl.bind({json.dumps(BIND_KEYS)}, hl.dsp.exec_cmd({json.dumps(SELF + ' toggle')}), {{ description = {json.dumps(BIND_DESC)} }})")
+    return {"bound": True, **cmd_bind_status()}
+
+
+def cmd_unbind():
+    existing = city_binds()
+    if any(not ours(b) for b in existing):
+        raise CityError("SUPER+S bind is not ours; leaving it alone")
+    if existing:
+        hypr_eval(f"hl.unbind({json.dumps(BIND_KEYS)})")
+    return {"unbound": bool(existing), **cmd_bind_status()}
+
+
+def main(argv):
+    if not argv:
+        print(__doc__.strip())
+        return 2
+    ensure_signature()
+    cmd, args = argv[0], argv[1:]
+    if cmd == "status":
+        result = cmd_status()
+    elif cmd == "snapshot":
+        result = snapshot()
+    elif cmd == "activate" and args:
+        result = cmd_activate(args[0], "--dry-run" in args[1:])
+    elif cmd == "restore" and len(args) == 2:
+        result = cmd_restore(args[0], args[1])
+    elif cmd == "toggle":
+        result = cmd_toggle()
+    elif cmd == "bind":
+        result = cmd_bind()
+    elif cmd == "unbind":
+        result = cmd_unbind()
+    elif cmd == "bind-status":
+        result = cmd_bind_status()
+    else:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    print(json.dumps(result))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except CityError as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
