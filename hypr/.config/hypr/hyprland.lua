@@ -326,8 +326,10 @@ hl.bind(mainMod .. " + SHIFT + 4", hl.dsp.window.move({ workspace = 8 }))
 hl.bind(mainMod .. " + SHIFT + 9", hl.dsp.window.move({ workspace = 9 }))
 hl.bind(mainMod .. " + SHIFT + 0", hl.dsp.window.move({ workspace = 10 }))
 
-hl.bind(mainMod .. " + S", hl.dsp.workspace.toggle_special("magic"))
-hl.bind(mainMod .. " + SHIFT + S", hl.dsp.window.move({ workspace = "special:magic" }))
+hl.bind(mainMod .. " + U", hl.dsp.workspace.toggle_special("magic"))
+hl.bind(mainMod .. " + SHIFT + U", hl.dsp.window.move({ workspace = "special:magic" }))
+-- NEON RAIN City Mode (description tags ownership for neon-rain/scripts/city-ctl)
+hl.bind(mainMod .. " + S", hl.dsp.exec_cmd("~/.dotfiles/neon-rain/scripts/city-ctl toggle"), { description = "neon-rain city-ctl toggle" })
 
 hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
 hl.bind(mainMod .. " + mouse_up", hl.dsp.focus({ workspace = "e-1" }))
