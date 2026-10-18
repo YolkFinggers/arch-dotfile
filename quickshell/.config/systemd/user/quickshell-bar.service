@@ -1,0 +1,13 @@
+# Quickshell status bar (replaces Waybar).
+# Started from hyprland.lua on hyprland.start after importing the Wayland env;
+# intentionally no [Install] section and no graphical-session.target deps
+# because that target is never activated on this setup.
+[Unit]
+Description=Quickshell status bar
+Documentation=https://quickshell.org/docs/
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/quickshell --path %h/.config/quickshell
+Restart=on-failure
+RestartSec=2

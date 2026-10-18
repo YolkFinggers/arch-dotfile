@@ -369,7 +369,7 @@ hl.bind(
 		"cliphist list | wofi --dmenu --pre-display-cmd \"echo '%s' | cut -f 2\" | cliphist decode | wl-copy"
 	)
 )
-hl.bind(mainMod .. " + P", hl.dsp.exec_cmd("pkill waybar; waybar &"))
+hl.bind(mainMod .. " + P", hl.dsp.exec_cmd("systemctl --user restart quickshell-bar.service"))
 
 hl.bind("PRINT", hl.dsp.exec_cmd("hyprshot -m output"))
 hl.bind(mainMod .. " + PRINT", hl.dsp.exec_cmd("hyprshot -m window"))
@@ -502,7 +502,11 @@ hl.config({
 })
 
 hl.on("hyprland.start", function()
-	hl.exec_cmd("hyprpaper & waybar")
+	hl.exec_cmd("hyprpaper")
+	-- Bar: Quickshell via tracked user unit (quickshell/.config/systemd/user/quickshell-bar.service); Waybar config kept as fallback
+	hl.exec_cmd(
+		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start quickshell-bar.service"
+	)
 	-- Notifications: SwayNC via its packaged systemd user unit (sole owner of org.freedesktop.Notifications)
 	hl.exec_cmd(
 		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start swaync.service"
