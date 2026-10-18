@@ -295,6 +295,8 @@ hl.bind(mainMod .. " + F", hl.dsp.exec_cmd("zen-browser"))
 hl.bind(mainMod .. " + H", hl.dsp.exec_cmd("hermes desktop"))
 hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("obsidian"))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(terminal .. " --directory ~/payroll_laravel/ -e nvim"))
+-- Manual lock via the shared single-instance helper (same one hypridle uses)
+hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/hypr/scripts/lock.sh"))
 
 hl.bind(mainMod .. " + A", hl.dsp.focus({ direction = "left" }))
 hl.bind(mainMod .. " + D", hl.dsp.focus({ direction = "right" }))
@@ -504,6 +506,10 @@ hl.on("hyprland.start", function()
 	-- Notifications: SwayNC via its packaged systemd user unit (sole owner of org.freedesktop.Notifications)
 	hl.exec_cmd(
 		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start swaync.service"
+	)
+	-- Idle: hypridle via its packaged systemd user unit (lock 300s, DPMS off 600s; config in hypridle.conf)
+	hl.exec_cmd(
+		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start hypridle.service"
 	)
 	-- hl.exec_cmd(terminal .. " -e hermes", { workspace = "1 silent" })
 	-- hl.exec_cmd(terminal .. " -e cmatrix -C magenta", { workspace = "2 silent" })
