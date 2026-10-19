@@ -35,7 +35,7 @@ hl.monitor({
 hl.monitor({
 	output = "HDMI-A-1",
 	mode = "highres",
-	position = "auto",
+	position = "1920x0",
 	scale = "1",
 	transform = 1,
 })
@@ -43,7 +43,7 @@ hl.monitor({
 hl.monitor({
 	output = "DP-1",
 	mode = "highres",
-	position = "auto-right",
+	position = "3000x0",
 	scale = "1",
 })
 
