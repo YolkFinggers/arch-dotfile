@@ -1,0 +1,12 @@
+# Daily hypridle profile boundaries. WantedBy=timers.target, not graphical-session.target,
+# because graphical-session.target is never activated on this setup.
+[Unit]
+Description=Daily hypridle profile switch (08:00 day, 17:30 night)
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+OnCalendar=*-*-* 17:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

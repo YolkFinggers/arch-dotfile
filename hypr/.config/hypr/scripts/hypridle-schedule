@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Start hypridle with the profile for the current local time.
+#   [08:00,17:30) -> hypridle-day.conf (no auto lock / DPMS off)
+#   otherwise     -> hypridle.conf     (lock 300s, DPMS off 600s)
+# Used as ExecStart by hypridle.service.d/schedule.conf; hypridle-schedule.timer
+# try-restarts hypridle.service at each boundary so the profile switches.
+#
+# Testing: `hypridle-schedule --print [HH:MM]` prints the selected config and exits.
+set -eu
+
+dir="$HOME/.config/hypr"
+day_start=$((8 * 60))        # 08:00
+day_end=$((17 * 60 + 30))    # 17:30
+
+select_config() {
+    local hhmm=$1 h m mins
+    h=${hhmm%%:*}
+    m=${hhmm##*:}
+    mins=$((10#$h * 60 + 10#$m))
+    if ((mins >= day_start && mins < day_end)); then
+        echo "$dir/hypridle-day.conf"
+    else
+        echo "$dir/hypridle.conf"
+    fi
+}
+
+if [[ ${1:-} == --print ]]; then
+    select_config "${2:-$(date +%H:%M)}"
+    exit 0
+fi
+
+exec /usr/bin/hypridle -c "$(select_config "$(date +%H:%M)")"

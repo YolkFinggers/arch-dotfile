@@ -1,0 +1,8 @@
+# Fired by hypridle-schedule.timer at 08:00 and 17:30. try-restart only restarts
+# hypridle if it is already running, so nothing starts outside a Hyprland session.
+[Unit]
+Description=Switch hypridle day/night profile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user try-restart hypridle.service
