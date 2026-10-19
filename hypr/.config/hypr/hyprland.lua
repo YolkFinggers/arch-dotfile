@@ -77,20 +77,21 @@ hl.workspace_rule({
 	monitor = "eDP-1",
 })
 
-hl.workspace_rule({
-	workspace = "4",
-	monitor = "HDMI-A-1",
-})
-
-hl.workspace_rule({
-	workspace = "5",
-	monitor = "HDMI-A-1",
-})
-
-hl.workspace_rule({
-	workspace = "6",
-	monitor = "HDMI-A-1",
-})
+-- Acer portrait: scroll down in full-width rows, each 85% of usable height.
+-- In vertical mode scrolling_width controls the row height, not screen width.
+for _, workspace in ipairs({ "4", "5", "6" }) do
+	hl.workspace_rule({
+		workspace = workspace,
+		monitor = "HDMI-A-1",
+		layout = "scrolling",
+		layout_opts = { direction = "down" },
+	})
+	hl.window_rule({
+		name = "acer-vertical-scrolling-" .. workspace,
+		match = { workspace = workspace },
+		scrolling_width = 0.85,
+	})
+end
 
 hl.workspace_rule({
 	workspace = "7",
