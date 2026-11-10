@@ -85,7 +85,7 @@ ShellRoot {
     }
 
     // --- City Mode (M2) ---------------------------------------------------------------------
-    // Opened/closed by scripts/city-ctl (SUPER+U) through IPC. Showing the city never switches
+    // Opened/closed by scripts/city-ctl (SUPER+S) through IPC. Showing the city never switches
     // workspaces; the focused window and monitor at open time are restored on ESC/toggle.
     property var city: null
     property bool cityOpen: false
@@ -236,7 +236,7 @@ ShellRoot {
             }
             return JSON.stringify({ time: root.time, files: files });
         }
-        // City Mode. SUPER+U: open with the caller's focused monitor/window, or close and restore.
+        // City Mode. SUPER+S: open with the caller's focused monitor/window, or close and restore.
         function cityToggle(output: string, prevWindow: string): string {
             if (root.cityOpen)
                 root.closeCity(true);

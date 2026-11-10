@@ -4,7 +4,7 @@ import Quickshell.Wayland
 import "lib/geometry.js" as Geometry
 import "lib/profiles.js" as Profiles
 
-// City Mode surface for one output (M2). Mapped only while City Mode is open: an Overlay
+// City Mode surface for one output (M2, M3 workspace destinations). Mapped only while City Mode is open: an Overlay
 // layer showing the same artwork, crop and rain as the wallpaper beneath, plus building
 // hotspots from config/city.json. Workspaces are never switched to show it, so every
 // monitor keeps its workspace and closing it reveals exactly what was there before.
@@ -182,14 +182,30 @@ PanelWindow {
                             const s = spot.st;
                             if (!s || s.error)
                                 return "";
+                            if (s.provider === "workspace")
+                                return `${s.state.toUpperCase()} · ${s.windowCount} window(s)`;
                             return `${s.state.toUpperCase()} · ${s.sessionsRunning} session(s) · ${s.windows.length} window(s)`;
                         }
-                        color: spot.st && spot.st.state === "running" ? "#8C5CF6" : "#C0C0C0"
+                        color: spot.st && (spot.st.state === "running" || spot.st.state === "occupied") ? "#8C5CF6" : "#C0C0C0"
                         font.family: "monospace"
                         font.pixelSize: 12
                     }
                     Text {
-                        text: spot.st && !spot.st.error ? (spot.st.windows.length ? "click: focus existing window" : "click: attach session") : ""
+                        text: {
+                            const s = spot.st;
+                            if (!s || s.error)
+                                return "";
+                            if (s.provider === "workspace")
+                                return `click: go to WS ${s.workspace}`;
+                            return s.windows.length ? "click: focus existing window" : "click: attach session";
+                        }
+                        color: "#8C8C9C"
+                        font.family: "monospace"
+                        font.pixelSize: 11
+                    }
+                    Text {
+                        visible: text !== ""
+                        text: spot.st && spot.st.pending ? `pending: ${spot.st.pending}` : ""
                         color: "#8C8C9C"
                         font.family: "monospace"
                         font.pixelSize: 11
@@ -203,7 +219,7 @@ PanelWindow {
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.topMargin: 18
-        text: win.ownsKeyboard ? "CITY MODE · ESC or SUPER+U to return" : "CITY MODE"
+        text: win.ownsKeyboard ? "CITY MODE · ESC or SUPER+S to return" : "CITY MODE"
         color: "#C0C0C0"
         opacity: 0.7
         font.family: "monospace"

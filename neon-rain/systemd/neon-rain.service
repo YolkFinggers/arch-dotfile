@@ -1,0 +1,21 @@
+[Unit]
+Description=Neon Rain animated wallpaper and City Mode
+Documentation=file:%h/.dotfiles/neon-rain/systemd/README.md
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=forking
+WorkingDirectory=%h/.dotfiles/neon-rain
+PIDFile=%h/.dotfiles/neon-rain/run/prototype.pid
+GuessMainPID=no
+ExecStart=%h/.dotfiles/neon-rain/scripts/neon-rain-proto start
+ExecStop=%h/.dotfiles/neon-rain/scripts/neon-rain-proto stop
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=20
+TimeoutStopSec=10
+KillMode=control-group
+
+# Deliberately no [Install] target. Hyprland's startup hook starts this
+# only after a compositor exists; graphical-session.target is inactive here.

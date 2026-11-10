@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Daily 08:00 morning action, run by city-morning.service (fired by city-morning.timer).
+# Opens Neon Rain City Mode on the already-running wallpaper and nothing else:
+#   - skips unless a live Hyprland instance and the running neon-rain prototype both exist
+#     (never starts Hyprland, the wallpaper or any other process)
+#   - skips while hyprlock is active (never locks or unlocks)
+#   - powers displays on only if one is off (never powers them off)
+#   - opens City Mode via `city-ctl open`, which never closes an already-open City
+# Skips exit 0 so a normal skip is not reported as a failed unit.
+#
+# Testing: `city-morning --dry-run` runs every check and prints the plan, but changes nothing.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+PROTO="$ROOT/scripts/neon-rain-proto"
+CITY_CTL="$ROOT/scripts/city-ctl"
+dry_run=0
+[[ ${1:-} == --dry-run ]] && dry_run=1
+
+skip() {
+    echo "city-morning: skip: $*"
+    exit 0
+}
+
+# The user manager's HYPRLAND_INSTANCE_SIGNATURE can be stale; always use the live instance.
+sig="$("$PROTO" discover 2>/dev/null | sed -n 's/^hyprland_instance_signature=//p')" ||
+    skip "no live Hyprland instance"
+[[ -n $sig ]] || skip "no live Hyprland instance"
+export HYPRLAND_INSTANCE_SIGNATURE="$sig"
+
+state="$("$PROTO" ipc cityState 2>/dev/null)" || skip "neon-rain wallpaper is not running"
+
+if pidof hyprlock >/dev/null 2>&1 || systemctl --user is-active --quiet hyprlock.service; then
+    skip "session is locked"
+fi
+
+dpms_off="$(hyprctl -j monitors | jq -r '[.[] | select(.dpmsStatus == false) | .name] | join(" ")')"
+city_open="$(jq -r '.open' <<<"$state")"
+
+if ((dry_run)); then
+    echo "city-morning: dry-run: hyprland=$sig cityOpen=$city_open displaysOff=[${dpms_off}]"
+    echo "city-morning: dry-run: would $([[ -n $dpms_off ]] && echo "power on displays, then ")run: $CITY_CTL open"
+    exit 0
+fi
+
+if [[ -n $dpms_off ]]; then
+    echo "city-morning: powering on displays: $dpms_off"
+    hyprctl dispatch 'hl.dsp.dpms({ action = "on" })'
+fi
+
+exec "$CITY_CTL" open

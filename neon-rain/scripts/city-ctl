@@ -1,11 +1,13 @@
 #!/usr/bin/env -S python3 -I
-"""NEON RAIN M2 City Mode controller.
+"""NEON RAIN City Mode controller (M2 Herdr tower, M3 workspace destinations).
 
     city-ctl status                 JSON: per-building discovery (Herdr sessions/windows, workspace, monitor)
     city-ctl snapshot               JSON: monitors, active workspaces, focused monitor/window (no titles)
-    city-ctl activate ID [--dry-run]  focus the building's existing window or launch its discovered command
+    city-ctl activate ID [--dry-run]  provider "herdr": focus existing window or attach discovered session;
+                                   provider "workspace": show the building's workspace on its monitor
     city-ctl restore ADDR MONITOR   refocus ADDR if it still exists, else MONITOR ("-" = none)
     city-ctl toggle                 open/close City Mode (what SUPER+S runs)
+    city-ctl open                   open City Mode only if closed; never closes it (city-morning.timer)
     city-ctl bind | unbind | bind-status   runtime SUPER+S City bind; persistent copy lives in hyprland.lua
                                    (SUPER+U / SUPER+SHIFT+U = special:magic, never touched)
 
@@ -181,6 +183,7 @@ def herdr_status(b):
     state = "error" if error else ("running" if running else "idle")
     return {
         "id": b["id"],
+        "provider": "herdr",
         "label": b.get("label", b["id"]),
         "subtitle": b.get("subtitle", ""),
         "state": state,
@@ -194,9 +197,38 @@ def herdr_status(b):
     }
 
 
+def workspace_status(b, workspaces=None):
+    """Plain workspace destination: only facts Hyprland reports (window count, where it is shown)."""
+    ws = int(b["workspace"])
+    if workspaces is None:
+        workspaces = hypr_json("workspaces")
+    live = next((w for w in workspaces if w["id"] == ws), None)
+    count = live["windows"] if live else 0
+    return {
+        "id": b["id"],
+        "provider": "workspace",
+        "label": b.get("label", b["id"]),
+        "subtitle": b.get("subtitle", ""),
+        "state": "occupied" if count else "empty",
+        "error": None,
+        "workspace": ws,
+        "assignedMonitor": assigned_monitor(ws),
+        "workspaceMonitor": live["monitor"] if live else None,
+        "windowCount": count,
+        "pending": b.get("pending"),
+    }
+
+
 def cmd_status():
     cfg = load_config()
-    return {"buildings": [herdr_status(b) for b in cfg["buildings"] if b.get("provider") == "herdr"]}
+    workspaces = hypr_json("workspaces")
+    result = []
+    for b in cfg["buildings"]:
+        if b.get("provider") == "herdr":
+            result.append(herdr_status(b))
+        elif b.get("provider") == "workspace":
+            result.append(workspace_status(b, workspaces))
+    return {"buildings": result}
 
 
 def snapshot():
@@ -219,8 +251,32 @@ def focus_monitor(name):
     hypr_eval(f"hl.dispatch(hl.dsp.focus({{ monitor = {lua_str(name, MONITOR_RE)} }}))")
 
 
+def activate_workspace(b, dry_run):
+    """Show the building's workspace where Hyprland keeps it. Never moves a workspace or launches."""
+    st = workspace_status(b)
+    ws = st["workspace"]
+    before = snapshot()
+    # An existing workspace stays on its current monitor; a new one is created by the
+    # workspace rule on its assigned monitor.
+    target = st["workspaceMonitor"] or st["assignedMonitor"]
+    plan = {"building": b["id"], "dryRun": dry_run, "before": before, "action": "workspace",
+            "workspace": ws, "assignedMonitor": st["assignedMonitor"], "targetMonitor": target}
+    if dry_run:
+        return plan
+    if before["focusedMonitor"] == target and before["monitors"].get(target) == ws:
+        plan["action"] = "already-shown"
+    else:
+        hypr_eval(f"hl.dispatch(hl.dsp.focus({{ workspace = {ws} }}))")
+    after = snapshot()
+    plan["after"] = after
+    plan["verified"] = after["focusedMonitor"] == target and after["monitors"].get(target) == ws
+    return plan
+
+
 def cmd_activate(bid, dry_run):
     b = building(load_config(), bid)
+    if b.get("provider") == "workspace":
+        return activate_workspace(b, dry_run)
     if b.get("provider") != "herdr":
         raise CityError(f"building {bid!r} has no supported provider")
     st = herdr_status(b)
@@ -280,6 +336,19 @@ def cmd_toggle():
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
+def cmd_open():
+    """Idempotent open for scheduled callers: never closes an open City. Never starts the wallpaper."""
+    out = subprocess.run([PROTO, "ipc", "cityState"], capture_output=True, text=True, check=False, timeout=5)
+    if out.returncode != 0:
+        raise CityError("City Mode needs the running neon-rain prototype: " + out.stderr.strip())
+    if json.loads(out.stdout.strip().splitlines()[-1]).get("open"):
+        return {"opened": False, "reason": "already-open"}
+    state = cmd_toggle()
+    if not state.get("open"):
+        raise CityError("cityToggle did not open City Mode")
+    return {"opened": True, "output": state.get("output")}
+
+
 # --- runtime bind --------------------------------------------------------------------------
 
 def city_binds():
@@ -330,6 +399,8 @@ def main(argv):
         result = cmd_restore(args[0], args[1])
     elif cmd == "toggle":
         result = cmd_toggle()
+    elif cmd == "open":
+        result = cmd_open()
     elif cmd == "bind":
         result = cmd_bind()
     elif cmd == "unbind":
