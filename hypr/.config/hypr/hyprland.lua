@@ -296,7 +296,7 @@ hl.bind(mainMod .. " + F", hl.dsp.exec_cmd("zen-browser"))
 hl.bind(mainMod .. " + H", hl.dsp.exec_cmd("hermes desktop"))
 hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("obsidian"))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(terminal .. " --directory ~/payroll_laravel/ -e nvim"))
--- Manual lock via the shared single-instance helper (same one hypridle uses)
+-- Manual lock via the single-instance helper (starts hyprlock.service); the only lock trigger
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/hypr/scripts/lock.sh"))
 
 hl.bind(mainMod .. " + A", hl.dsp.focus({ direction = "left" }))
@@ -506,6 +506,10 @@ hl.config({
 
 hl.on("hyprland.start", function()
 	hl.exec_cmd("hyprpaper")
+	-- Neon Rain: supervised wallpaper/City Mode, started only after Hyprland is ready.
+	hl.exec_cmd(
+		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && { systemctl --user reset-failed neon-rain.service || true; } && systemctl --user restart neon-rain.service"
+	)
 	-- Bar: Quickshell via tracked user unit (quickshell/.config/systemd/user/quickshell-bar.service); Waybar config kept as fallback
 	hl.exec_cmd(
 		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start quickshell-bar.service"
@@ -514,10 +518,16 @@ hl.on("hyprland.start", function()
 	hl.exec_cmd(
 		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start swaync.service"
 	)
-	-- Idle: hypridle via its packaged systemd user unit (lock 300s, DPMS off 600s; config in hypridle.conf)
-	hl.exec_cmd(
-		"systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start hypridle.service"
-	)
+	-- Idle: no hypridle. Automatic idle lock and DPMS off are disabled (hypridle.service is masked);
+	-- lock manually with SUPER+L. City Mode opens daily at 08:00 via neon-rain city-morning.timer.
+	-- Hermes remote backend: silent, single-instance systemd service.
+	hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE && systemctl --user start hermes-serve.service")
+	-- Paperclip
+	hl.exec_cmd("env GDK_BACKEND=x11 surf -z 1.5 http://127.0.0.1:3100", { workspace = "1 silent" })
+	-- Multica
+	hl.exec_cmd("env GDK_BACKEND=x11 surf -K -z 1.5 http://127.0.0.1:3000", { workspace = "1 silent" })
+
+	hl.exec_cmd("obsidian", { workspace = "2 silent" })
 	-- hl.exec_cmd(terminal .. " -e hermes", { workspace = "1 silent" })
 	-- hl.exec_cmd(terminal .. " -e cmatrix -C magenta", { workspace = "2 silent" })
 	hl.exec_cmd(terminal .. " --directory ~/payroll_laravel/ -e lazygit", { workspace = "4 silent" })
@@ -529,10 +539,9 @@ hl.on("hyprland.start", function()
 	hl.exec_cmd(terminal .. " -e btop", { workspace = "5 silent" })
 	hl.exec_cmd(terminal .. " -e herdr session attach payroll_laravel", { workspace = "6 silent" })
 	hl.exec_cmd(terminal .. " -e herdr session attach trading-empire", { workspace = "6 silent" })
-	hl.exec_cmd(terminal .. " --directory ~/payroll_laravel/  -e nvim", { workspace = "6 silent" })
+	hl.exec_cmd(terminal .. " --directory ~/payroll_laravel/  -e nvim", { workspace = "9 silent" })
 	hl.exec_cmd("hermes desktop", { workspace = "7 silent" })
 	hl.exec_cmd("zen-browser", { workspace = "7 silent" })
-	hl.exec_cmd("obsidian", { workspace = "8 silent" })
 	hl.exec_cmd("wl-paste --type text --watch cliphist store")
 	hl.exec_cmd("wl-paste --type image --watch cliphist store")
 end)

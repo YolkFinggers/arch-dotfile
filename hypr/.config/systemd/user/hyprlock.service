@@ -1,0 +1,23 @@
+# Screen locker, started on demand by scripts/lock.sh (SUPER+L; hypridle is masked, so no
+# automatic idle lock). Running hyprlock in its own unit keeps it out of the caller's cgroup,
+# so stopping or restarting the caller can never kill an active lock and leave Hyprland
+# fail-closed.
+# Environment (WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE) comes from the user manager,
+# imported by the hyprland.start hooks in hyprland.lua and refreshed by lock.sh.
+# No [Install]: never enabled, only started by lock.sh.
+[Unit]
+Description=Hyprlock screen locker
+Documentation=https://wiki.hyprland.org/Hypr-Ecosystem/hyprlock
+ConditionEnvironment=WAYLAND_DISPLAY
+# A stray `systemctl --user stop/restart hyprlock` would kill the locker; refuse it.
+# Session shutdown still stops the unit normally.
+RefuseManualStop=yes
+
+[Service]
+Type=simple
+# systemd already allows one instance of this unit; flock also refuses to start while
+# any other holder of the lock file (e.g. a pre-unit lock.sh hyprlock) is still running.
+ExecStart=/usr/bin/flock -n %t/hyprlock.flock /usr/bin/hyprlock
+# Never restart: hyprlock exits on unlock, and a restart could race or re-lock the session.
+# If hyprlock crashes, Hyprland stays locked (fail-closed); recover from a TTY.
+Restart=no
